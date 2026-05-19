@@ -1,7 +1,4 @@
-local repo = 'https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/'
-local Library = loadstring(game:HttpGet(repo .. 'Library.lua'))()
-local ThemeManager = loadstring(game:HttpGet(repo .. 'addons/ThemeManager.lua'))()
-local SaveManager = loadstring(game:HttpGet(repo .. 'addons/SaveManager.lua'))()
+local Library = loadstring(game:HttpGet('https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/Library.lua'))()
 
 local Window = Library:CreateWindow({
     Title = 'Requiem | Roria Conquest',
@@ -42,11 +39,10 @@ MainLeft:AddButton('TP Pokeballs To You', function()
                     end
 
                     local angle = (spread * (math.pi * 2)) / 8
-                    local radius = 3
                     local offset = Vector3.new(
-                        math.cos(angle) * radius,
-                        0.5, -- just above waist height
-                        math.sin(angle) * radius
+                        math.cos(angle) * 3,
+                        0.5,
+                        math.sin(angle) * 3
                     )
 
                     item:PivotTo(CFrame.new(hrp.Position + offset))
@@ -68,10 +64,5 @@ MainLeft:AddButton('TP Pokeballs To You', function()
         Notify("TP Pokeballs", "No pokeballs found on this route!", 3)
     end
 end)
-
-ThemeManager:SetLibrary(Library)
-SaveManager:SetLibrary(Library)
-SaveManager:SetFolder('RequiemRoria')
-ThemeManager:BuildThemeSection(Tabs.Main)
 
 Notify("Requiem", "Roria Conquest loaded!", 3)
