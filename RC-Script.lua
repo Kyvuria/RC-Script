@@ -79,7 +79,6 @@ end)
 -- ============================================================
 local WorldLeft = Tabs.Main:AddLeftGroupbox('World')
 
--- DELETE TRAINERS
 local savedTrainers = {}
 local trainerWatcher = nil
 
@@ -90,7 +89,6 @@ WorldLeft:AddToggle('DeleteTrainers', {
         if state then
             savedTrainers = {}
             local count = 0
-
             local function stripTrainers(chunk)
                 for _, obj in ipairs(chunk:GetChildren()) do
                     if obj:FindFirstChild("#Battle") then
@@ -109,24 +107,16 @@ WorldLeft:AddToggle('DeleteTrainers', {
                     end
                 end
             end
-
-            for _, chunk in ipairs(GetChunks()) do
-                stripTrainers(chunk)
-            end
-
+            for _, chunk in ipairs(GetChunks()) do stripTrainers(chunk) end
             trainerWatcher = workspace.ChildAdded:Connect(function(child)
                 if child.Name:lower():find("chunk") then
                     task.wait(0.2)
                     stripTrainers(child)
                 end
             end)
-
             Notify("Trainers", "Hid " .. count .. " trainer(s)!", 3)
         else
-            if trainerWatcher then
-                trainerWatcher:Disconnect()
-                trainerWatcher = nil
-            end
+            if trainerWatcher then trainerWatcher:Disconnect() trainerWatcher = nil end
             local count = 0
             for _, entry in ipairs(savedTrainers) do
                 if entry.hrp then
@@ -144,7 +134,6 @@ WorldLeft:AddToggle('DeleteTrainers', {
     end
 })
 
--- DELETE GRASS
 local savedGrass = {}
 local grassWatcher = nil
 local grassKeywords = {"grass", "#grass", "tallgrass", "talgrass", "encounter"}
@@ -152,9 +141,7 @@ local grassKeywords = {"grass", "#grass", "tallgrass", "talgrass", "encounter"}
 local function isGrass(name)
     local nameLower = name:lower()
     for _, keyword in ipairs(grassKeywords) do
-        if nameLower == keyword or nameLower:find(keyword) then
-            return true
-        end
+        if nameLower == keyword or nameLower:find(keyword) then return true end
     end
     return false
 end
@@ -166,7 +153,6 @@ WorldLeft:AddToggle('DeleteGrass', {
         if state then
             savedGrass = {}
             local count = 0
-
             local function stripGrass(chunk)
                 for _, obj in ipairs(chunk:GetDescendants()) do
                     if obj and obj.Parent and isGrass(obj.Name) then
@@ -176,33 +162,20 @@ WorldLeft:AddToggle('DeleteGrass', {
                     end
                 end
             end
-
-            for _, chunk in ipairs(GetChunks()) do
-                stripGrass(chunk)
-            end
-
+            for _, chunk in ipairs(GetChunks()) do stripGrass(chunk) end
             grassWatcher = workspace.ChildAdded:Connect(function(child)
                 if child.Name:lower():find("chunk") then
                     task.wait(0.2)
                     stripGrass(child)
                 end
             end)
-
             if count > 0 then
                 Notify("Grass", "Hid " .. count .. " grass object(s)!", 3)
             else
                 Notify("Grass", "No grass found! Check console (F9) for names.", 4)
-                for _, chunk in ipairs(GetChunks()) do
-                    for _, obj in ipairs(chunk:GetChildren()) do
-                        print("[Grass Debug]", obj.Name, obj.ClassName)
-                    end
-                end
             end
         else
-            if grassWatcher then
-                grassWatcher:Disconnect()
-                grassWatcher = nil
-            end
+            if grassWatcher then grassWatcher:Disconnect() grassWatcher = nil end
             local count = 0
             for _, entry in ipairs(savedGrass) do
                 if entry.object and entry.parent then
@@ -216,7 +189,6 @@ WorldLeft:AddToggle('DeleteGrass', {
     end
 })
 
--- DELETE OBSTACLES
 local savedObstacles = {}
 local obstacleWatcher = nil
 
@@ -227,7 +199,6 @@ WorldLeft:AddToggle('DeleteObstacles', {
         if state then
             savedObstacles = {}
             local count = 0
-
             local function stripObstacles(chunk)
                 for _, obj in ipairs(chunk:GetChildren()) do
                     if obj.Name == "HackableShrubbery" then
@@ -237,24 +208,16 @@ WorldLeft:AddToggle('DeleteObstacles', {
                     end
                 end
             end
-
-            for _, chunk in ipairs(GetChunks()) do
-                stripObstacles(chunk)
-            end
-
+            for _, chunk in ipairs(GetChunks()) do stripObstacles(chunk) end
             obstacleWatcher = workspace.ChildAdded:Connect(function(child)
                 if child.Name:lower():find("chunk") then
                     task.wait(0.2)
                     stripObstacles(child)
                 end
             end)
-
             Notify("Obstacles", "Removed " .. count .. " obstacle(s)!", 3)
         else
-            if obstacleWatcher then
-                obstacleWatcher:Disconnect()
-                obstacleWatcher = nil
-            end
+            if obstacleWatcher then obstacleWatcher:Disconnect() obstacleWatcher = nil end
             local count = 0
             for _, entry in ipairs(savedObstacles) do
                 if entry.object and entry.parent then
@@ -274,7 +237,6 @@ WorldLeft:AddToggle('DeleteObstacles', {
 local MiscLeft = Tabs.Misc:AddLeftGroupbox('Player')
 local MiscRight = Tabs.Misc:AddRightGroupbox('Server')
 
--- WALKSPEED SLIDER
 MiscLeft:AddSlider('WalkSpeed', {
     Text = 'Walk Speed',
     Default = 16,
@@ -284,71 +246,48 @@ MiscLeft:AddSlider('WalkSpeed', {
     Callback = function(value)
         local char = LocalPlayer.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if hum then
-            hum.WalkSpeed = value
-        end
+        if hum then hum.WalkSpeed = value end
     end
 })
 
 -- ============================================================
--- NOCLIP (REWRITTEN)
--- Uses a flag so the Stepped loop never fights with restoration.
+-- NOCLIP
 -- ============================================================
 local noclipEnabled = false
 local noclipConnection = nil
+local savedCollisions = {}
 
--- Store original CanCollide values so we restore exactly what was there
 local function getOriginalCollisions(char)
     local saved = {}
     for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then
-            saved[part] = part.CanCollide
-        end
+        if part:IsA("BasePart") then saved[part] = part.CanCollide end
     end
     return saved
 end
 
-local savedCollisions = {}
-
 local function startNoclip()
     local char = LocalPlayer.Character
     if not char then return end
-
-    -- Save original collision state
     savedCollisions = getOriginalCollisions(char)
-
     noclipEnabled = true
-
     if noclipConnection then noclipConnection:Disconnect() end
     noclipConnection = RunService.Stepped:Connect(function()
-        -- Only run if still enabled — no race condition
         if not noclipEnabled then return end
         local c = LocalPlayer.Character
         if not c then return end
         for _, part in ipairs(c:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.CanCollide = false
-            end
+            if part:IsA("BasePart") then part.CanCollide = false end
         end
     end)
 end
 
 local function stopNoclip()
-    -- Disable the flag FIRST so Stepped stops overriding CanCollide
     noclipEnabled = false
-
-    if noclipConnection then
-        noclipConnection:Disconnect()
-        noclipConnection = nil
-    end
-
+    if noclipConnection then noclipConnection:Disconnect() noclipConnection = nil end
     local char = LocalPlayer.Character
     if not char then return end
-
-    local hum = char:FindFirstChildOfClass("Humanoid")
     local hrp = char:FindFirstChild("HumanoidRootPart")
-
-    -- Restore saved collision state (or default to true)
+    if hrp then hrp.CFrame = hrp.CFrame + Vector3.new(0, 0.1, 0) end
     for _, part in ipairs(char:GetDescendants()) do
         if part:IsA("BasePart") then
             local original = savedCollisions[part]
@@ -356,15 +295,11 @@ local function stopNoclip()
         end
     end
     savedCollisions = {}
-
-    -- Let physics settle for one frame, then fix humanoid state
     task.defer(function()
         local c = LocalPlayer.Character
         if not c then return end
         local h = c:FindFirstChildOfClass("Humanoid")
-        if h then
-            h:ChangeState(Enum.HumanoidStateType.GettingUp)
-        end
+        if h then h:ChangeState(Enum.HumanoidStateType.GettingUp) end
     end)
 end
 
@@ -372,19 +307,123 @@ MiscLeft:AddToggle('Noclip', {
     Text = 'Noclip',
     Default = false,
     Callback = function(state)
+        if state then startNoclip() Notify("Noclip", "Noclip enabled!", 3)
+        else stopNoclip() Notify("Noclip", "Noclip disabled!", 3) end
+    end
+})
+
+-- ============================================================
+-- AUTO ENCOUNTER
+-- Teleports you into grass, waits 2 full seconds so the server
+-- has time to register your position and tick the step counter,
+-- then snaps you back. Repeats until a battle starts.
+-- Battle detection checks ScreenGui only (skips Folders etc).
+-- ============================================================
+local autoEncounterRunning = false
+
+local function getClosestGrass()
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local closest, closestDist = nil, math.huge
+    for _, chunk in ipairs(GetChunks()) do
+        for _, obj in ipairs(chunk:GetDescendants()) do
+            if (obj.Name == "Grass" or obj.Name == "MGrass") and obj:IsA("BasePart") then
+                local dist = hrp and (obj.Position - hrp.Position).Magnitude or 0
+                if dist < closestDist then
+                    closestDist = dist
+                    closest = obj
+                end
+            end
+        end
+    end
+    return closest
+end
+
+local function isInBattle()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return false end
+    for _, gui in ipairs(pg:GetChildren()) do
+        if gui:IsA("ScreenGui") then
+            local n = gui.Name:lower()
+            if (n:find("battle") or n:find("fight") or n:find("pokemon")) and gui.Enabled then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+MiscLeft:AddToggle('AutoEncounter', {
+    Text = 'Auto Encounter',
+    Default = false,
+    Callback = function(state)
         if state then
-            startNoclip()
-            Notify("Noclip", "Noclip enabled!", 3)
+            local grass = getClosestGrass()
+            if not grass then
+                Notify("Auto Encounter", "No grass found on this route!", 3)
+                return
+            end
+
+            -- Clone a grass part and sink it deep underground below the player
+            -- completely invisible to everyone, only the server sees it
+            local ghostGrass = grass:Clone()
+            ghostGrass.Name = "Grass"
+            ghostGrass.Anchored = true
+            ghostGrass.CanCollide = false
+            ghostGrass.Transparency = 1
+            ghostGrass.Size = Vector3.new(20, 1, 20)
+            ghostGrass.Parent = workspace
+
+            autoEncounterRunning = true
+            Notify("Auto Encounter", "Running!", 3)
+
+            task.spawn(function()
+                while autoEncounterRunning do
+                    if isInBattle() then
+                        task.wait(0.5)
+                    else
+                        local char = LocalPlayer.Character
+                        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            -- Keep ghost grass directly under player, 2000 studs underground
+                            -- so it is completely invisible but server still detects overlap
+                            local underPos = Vector3.new(hrp.Position.X, hrp.Position.Y - 2000, hrp.Position.Z)
+                            ghostGrass.CFrame = CFrame.new(underPos)
+
+                            local realCFrame = hrp.CFrame
+
+                            -- Flicker player down into ghost grass for 3 frames
+                            hrp.CFrame = CFrame.new(underPos.X, underPos.Y + 1, underPos.Z)
+                            task.wait()
+                            task.wait()
+                            task.wait()
+
+                            -- Snap back instantly
+                            if hrp and hrp.Parent then
+                                hrp.CFrame = realCFrame
+                            end
+
+                            task.wait(0.2)
+                        else
+                            task.wait(0.5)
+                        end
+                    end
+                end
+
+                -- Clean up ghost grass when stopped
+                if ghostGrass and ghostGrass.Parent then
+                    ghostGrass:Destroy()
+                end
+            end)
         else
-            stopNoclip()
-            Notify("Noclip", "Noclip disabled!", 3)
+            autoEncounterRunning = false
+            Notify("Auto Encounter", "Stopped!", 3)
         end
     end
 })
 
--- CLICK TP (Hold Ctrl + Left Click)
+-- CLICK TP
 local clickTpConnection = nil
-
 MiscLeft:AddToggle('ClickTP', {
     Text = 'Click TP (Ctrl + Click)',
     Default = false,
@@ -411,10 +450,7 @@ MiscLeft:AddToggle('ClickTP', {
             end)
             Notify("Click TP", "Hold Ctrl + Click to teleport!", 3)
         else
-            if clickTpConnection then
-                clickTpConnection:Disconnect()
-                clickTpConnection = nil
-            end
+            if clickTpConnection then clickTpConnection:Disconnect() clickTpConnection = nil end
             Notify("Click TP", "Click TP disabled!", 3)
         end
     end
@@ -423,15 +459,12 @@ MiscLeft:AddToggle('ClickTP', {
 -- ============================================================
 -- SERVER BUTTONS
 -- ============================================================
-
--- REJOIN
 MiscRight:AddButton('Rejoin', function()
     Notify("Rejoin", "Rejoining...", 2)
     task.wait(0.5)
     TeleportService:Teleport(game.PlaceId, LocalPlayer)
 end)
 
--- SERVER HOP
 MiscRight:AddButton('Server Hop', function()
     Notify("Server Hop", "Finding a new server...", 3)
     task.spawn(function()
@@ -458,7 +491,6 @@ MiscRight:AddButton('Server Hop', function()
     end)
 end)
 
--- JOIN LOWEST SERVER
 MiscRight:AddButton('Join Lowest Server', function()
     Notify("Join Lowest", "Finding lowest pop server...", 3)
     task.spawn(function()
@@ -473,9 +505,7 @@ MiscRight:AddButton('Join Lowest Server', function()
                     "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
                 ))
             end)
-            if success and result and result.data then
-                return result.data
-            end
+            if success and result and result.data then return result.data end
             return nil
         end
 
@@ -496,30 +526,15 @@ MiscRight:AddButton('Join Lowest Server', function()
 
         for attempt = 1, maxAttempts do
             local servers = fetchServers()
-            if not servers then
-                Notify("Join Lowest", "Could not fetch server list.", 3)
-                return
-            end
-
+            if not servers then Notify("Join Lowest", "Could not fetch server list.", 3) return end
             local sorted = getSortedServers(servers)
-            if #sorted == 0 then
-                Notify("Join Lowest", "No valid servers found.", 3)
-                return
-            end
-
+            if #sorted == 0 then Notify("Join Lowest", "No valid servers found.", 3) return end
             local target = sorted[1]
             Notify("Join Lowest", "Attempt " .. attempt .. ": joining server with " .. target.playing .. " player(s)...", 4)
-
             local ok = pcall(function()
                 TeleportService:TeleportToPlaceInstance(placeId, target.id, LocalPlayer)
             end)
-
-            if ok then
-                return
-            else
-                blacklist[target.id] = true
-                task.wait(1)
-            end
+            if ok then return else blacklist[target.id] = true task.wait(1) end
         end
 
         Notify("Join Lowest", "All attempts failed, rejoining current server...", 3)
