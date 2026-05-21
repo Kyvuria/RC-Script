@@ -15,6 +15,8 @@ end
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
 local LocalPlayer = Players.LocalPlayer
 
 local function GetChunks()
@@ -270,13 +272,14 @@ WorldLeft:AddToggle('DeleteObstacles', {
 -- MISC TAB
 -- ============================================================
 local MiscLeft = Tabs.Misc:AddLeftGroupbox('Player')
+local MiscRight = Tabs.Misc:AddRightGroupbox('Server')
 
 -- WALKSPEED SLIDER
 MiscLeft:AddSlider('WalkSpeed', {
     Text = 'Walk Speed',
     Default = 16,
     Min = 16,
-    Max = 30,
+    Max = 50,
     Rounding = 0,
     Callback = function(value)
         local char = LocalPlayer.Character
@@ -287,38 +290,93 @@ MiscLeft:AddSlider('WalkSpeed', {
     end
 })
 
--- NOCLIP
+-- ============================================================
+-- NOCLIP (REWRITTEN)
+-- Uses a flag so the Stepped loop never fights with restoration.
+-- ============================================================
+local noclipEnabled = false
 local noclipConnection = nil
+
+-- Store original CanCollide values so we restore exactly what was there
+local function getOriginalCollisions(char)
+    local saved = {}
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            saved[part] = part.CanCollide
+        end
+    end
+    return saved
+end
+
+local savedCollisions = {}
+
+local function startNoclip()
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    -- Save original collision state
+    savedCollisions = getOriginalCollisions(char)
+
+    noclipEnabled = true
+
+    if noclipConnection then noclipConnection:Disconnect() end
+    noclipConnection = RunService.Stepped:Connect(function()
+        -- Only run if still enabled — no race condition
+        if not noclipEnabled then return end
+        local c = LocalPlayer.Character
+        if not c then return end
+        for _, part in ipairs(c:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+            end
+        end
+    end)
+end
+
+local function stopNoclip()
+    -- Disable the flag FIRST so Stepped stops overriding CanCollide
+    noclipEnabled = false
+
+    if noclipConnection then
+        noclipConnection:Disconnect()
+        noclipConnection = nil
+    end
+
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+
+    -- Restore saved collision state (or default to true)
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            local original = savedCollisions[part]
+            part.CanCollide = (original ~= nil) and original or true
+        end
+    end
+    savedCollisions = {}
+
+    -- Let physics settle for one frame, then fix humanoid state
+    task.defer(function()
+        local c = LocalPlayer.Character
+        if not c then return end
+        local h = c:FindFirstChildOfClass("Humanoid")
+        if h then
+            h:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end
+    end)
+end
 
 MiscLeft:AddToggle('Noclip', {
     Text = 'Noclip',
     Default = false,
     Callback = function(state)
         if state then
-            noclipConnection = RunService.Stepped:Connect(function()
-                local char = LocalPlayer.Character
-                if char then
-                    for _, part in ipairs(char:GetDescendants()) do
-                        if part:IsA("BasePart") then
-                            part.CanCollide = false
-                        end
-                    end
-                end
-            end)
+            startNoclip()
             Notify("Noclip", "Noclip enabled!", 3)
         else
-            if noclipConnection then
-                noclipConnection:Disconnect()
-                noclipConnection = nil
-            end
-            local char = LocalPlayer.Character
-            if char then
-                for _, part in ipairs(char:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        part.CanCollide = true
-                    end
-                end
-            end
+            stopNoclip()
             Notify("Noclip", "Noclip disabled!", 3)
         end
     end
@@ -361,5 +419,113 @@ MiscLeft:AddToggle('ClickTP', {
         end
     end
 })
+
+-- ============================================================
+-- SERVER BUTTONS
+-- ============================================================
+
+-- REJOIN
+MiscRight:AddButton('Rejoin', function()
+    Notify("Rejoin", "Rejoining...", 2)
+    task.wait(0.5)
+    TeleportService:Teleport(game.PlaceId, LocalPlayer)
+end)
+
+-- SERVER HOP
+MiscRight:AddButton('Server Hop', function()
+    Notify("Server Hop", "Finding a new server...", 3)
+    task.spawn(function()
+        local placeId = game.PlaceId
+        local currentJobId = game.JobId
+        local success, result = pcall(function()
+            return HttpService:JSONDecode(game:HttpGet(
+                "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
+            ))
+        end)
+        if success and result and result.data then
+            for _, server in ipairs(result.data) do
+                if server.id ~= currentJobId and server.playing < server.maxPlayers then
+                    local ok = pcall(function()
+                        TeleportService:TeleportToPlaceInstance(placeId, server.id, LocalPlayer)
+                    end)
+                    if ok then return end
+                end
+            end
+        end
+        Notify("Server Hop", "No servers found, rejoining...", 3)
+        task.wait(1)
+        TeleportService:Teleport(placeId, LocalPlayer)
+    end)
+end)
+
+-- JOIN LOWEST SERVER
+MiscRight:AddButton('Join Lowest Server', function()
+    Notify("Join Lowest", "Finding lowest pop server...", 3)
+    task.spawn(function()
+        local placeId = game.PlaceId
+        local currentJobId = game.JobId
+        local blacklist = {}
+        local maxAttempts = 5
+
+        local function fetchServers()
+            local success, result = pcall(function()
+                return HttpService:JSONDecode(game:HttpGet(
+                    "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
+                ))
+            end)
+            if success and result and result.data then
+                return result.data
+            end
+            return nil
+        end
+
+        local function getSortedServers(servers)
+            local valid = {}
+            for _, server in ipairs(servers) do
+                if server.id ~= currentJobId
+                    and not blacklist[server.id]
+                    and server.playing < server.maxPlayers
+                    and server.playing >= 0
+                then
+                    table.insert(valid, server)
+                end
+            end
+            table.sort(valid, function(a, b) return a.playing < b.playing end)
+            return valid
+        end
+
+        for attempt = 1, maxAttempts do
+            local servers = fetchServers()
+            if not servers then
+                Notify("Join Lowest", "Could not fetch server list.", 3)
+                return
+            end
+
+            local sorted = getSortedServers(servers)
+            if #sorted == 0 then
+                Notify("Join Lowest", "No valid servers found.", 3)
+                return
+            end
+
+            local target = sorted[1]
+            Notify("Join Lowest", "Attempt " .. attempt .. ": joining server with " .. target.playing .. " player(s)...", 4)
+
+            local ok = pcall(function()
+                TeleportService:TeleportToPlaceInstance(placeId, target.id, LocalPlayer)
+            end)
+
+            if ok then
+                return
+            else
+                blacklist[target.id] = true
+                task.wait(1)
+            end
+        end
+
+        Notify("Join Lowest", "All attempts failed, rejoining current server...", 3)
+        task.wait(1)
+        TeleportService:Teleport(placeId, LocalPlayer)
+    end)
+end)
 
 Notify("Requiem", "Roria Conquest loaded!", 3)
