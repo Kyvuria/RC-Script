@@ -308,15 +308,26 @@ local function doEncounter()
     local restored = false
     local conn
     local battleWatcher
+    local battleEndWatcher
 
-    local function restoreAll()
+    local function fullyRestore()
+        showChar()
+        resetCamera()
+        local c = LocalPlayer.Character
+        local h = c and c:FindFirstChild("HumanoidRootPart")
+        if h then h.Anchored = false end
+    end
+
+    local function restorePosition()
         if restored then return end
         restored = true
         if conn then conn:Disconnect() conn = nil end
         if battleWatcher then battleWatcher:Disconnect() battleWatcher = nil end
         hrp.Anchored = false
         hrp.CFrame = origin
+        -- Reset camera immediately so battle UI works normally
         resetCamera()
+        showChar()
     end
 
     hideChar()
@@ -326,7 +337,15 @@ local function doEncounter()
     battleWatcher = workspace.ChildAdded:Connect(function(child)
         if child.Name == "RouteNight" or child.Name == "RouteDay" then
             battleStarted = true
-            restoreAll()
+            restorePosition()
+            -- Watch for battle end
+            battleEndWatcher = workspace.ChildRemoved:Connect(function(removed)
+                if removed.Name == "RouteNight" or removed.Name == "RouteDay" then
+                    if battleEndWatcher then battleEndWatcher:Disconnect() battleEndWatcher = nil end
+                    task.wait(0.3)
+                    fullyRestore()
+                end
+            end)
         end
     end)
 
@@ -359,12 +378,22 @@ local function doEncounter()
         end
     end)
 
+    -- Wait up to 6s for encounter to trigger
     local elapsed = 0
     while not restored and elapsed < 6 and autoBattleEnabled do
         task.wait(0.1)
         elapsed += 0.1
     end
-    restoreAll()
+
+    -- No battle triggered, clean up
+    if not restored then
+        if conn then conn:Disconnect() conn = nil end
+        if battleWatcher then battleWatcher:Disconnect() battleWatcher = nil end
+        if battleEndWatcher then battleEndWatcher:Disconnect() battleEndWatcher = nil end
+        hrp.Anchored = false
+        hrp.CFrame = origin
+        fullyRestore()
+    end
 
     return battleStarted
 end
@@ -375,7 +404,6 @@ AutoBattleGroup:AddToggle('AutoBattle', {
     Callback = function(state)
         autoBattleEnabled = state
         if not state then
-            -- Don't touch anything if mid-battle, let it finish naturally
             if not isInBattle() then
                 resetCamera()
                 showChar()
@@ -397,7 +425,6 @@ AutoBattleGroup:AddToggle('AutoBattle', {
 
                 if not autoBattleEnabled then break end
 
-                resetCamera()
                 local char = LocalPlayer.Character
                 local hrp = char and char:FindFirstChild("HumanoidRootPart")
                 if hrp then hrp.Anchored = false end
@@ -417,14 +444,9 @@ AutoBattleGroup:AddToggle('AutoBattle', {
 
                 -- Wait for battle to end
                 repeat task.wait(0.3) until not isInBattle() or not autoBattleEnabled
-
-                task.wait(0.3)
-                showChar()
-                resetCamera()
-                task.wait(0.3)
+                task.wait(0.8)
             end
 
-            -- Final cleanup only if not mid-battle
             if not isInBattle() then
                 showChar()
                 resetCamera()
