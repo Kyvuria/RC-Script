@@ -1,4 +1,6 @@
 local Library = loadstring(game:HttpGet('https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/Library.lua'))()
+local Options = Library.Options
+local Toggles = Library.Toggles
 local Window = Library:CreateWindow({
     Title = 'Requiem | Roria Conquest',
     Center = true,
@@ -288,6 +290,150 @@ WorldLeft:AddToggle('DeleteObstacles', {
 local AutoBattleGroup = Tabs.Main:AddRightGroupbox('Auto Battle')
 local autoBattleEnabled = false
 
+-- PP tracking table: ppTracker[slotNumber] = remaining PP this session
+local ppTracker = {nil, nil, nil, nil}
+
+local function resetPPTracker()
+    ppTracker = {nil, nil, nil, nil}
+end
+
+-- Reads current PP for a move slot from the battle UI
+-- Returns current PP or nil if it can't find it
+local function readMovePP(battleGui, slotIndex)
+    -- Gather all visible PP-related labels, sorted left-to-right
+    local ppLabels = {}
+    for _, obj in ipairs(battleGui:GetDescendants()) do
+        if obj:IsA("TextLabel") and obj.Visible then
+            local t = obj.Text or ""
+            -- Match patterns like "15/20", "PP: 15/20", "15 / 20"
+            if t:match("%d+%s*/%s*%d+") then
+                table.insert(ppLabels, obj)
+            end
+        end
+    end
+    table.sort(ppLabels, function(a, b)
+        return a.AbsolutePosition.X < b.AbsolutePosition.X
+    end)
+    local label = ppLabels[slotIndex]
+    if label then
+        local cur = label.Text:match("(%d+)%s*/%s*%d+")
+        if cur then return tonumber(cur) end
+    end
+    return nil
+end
+
+-- Finds and clicks a move button by slot index (1-4, sorted left to right)
+local function clickMoveSlot(battleGui, slotIndex)
+    local buttons = {}
+    for _, obj in ipairs(battleGui:GetDescendants()) do
+        if (obj:IsA("TextButton") or obj:IsA("ImageButton")) and obj.Visible then
+            local name = obj.Name:lower()
+            if name:find("move") or name:find("attack") or name:find("skill") then
+                table.insert(buttons, obj)
+            end
+        end
+    end
+    table.sort(buttons, function(a, b)
+        return a.AbsolutePosition.X < b.AbsolutePosition.X
+    end)
+    local btn = buttons[slotIndex]
+    if btn then
+        btn:Activate()
+        return true
+    end
+    return false
+end
+
+-- Main auto move function called each turn
+local function autoUseMove()
+    if not Toggles.AutoMove.Value then return end
+
+    task.spawn(function()
+        local playerGui = LocalPlayer.PlayerGui
+        local mainGui = playerGui:FindFirstChild("MainGui")
+        local battleGui = mainGui and mainGui:FindFirstChild("BattleGui")
+        if not battleGui then
+            warn("[AutoMove] No BattleGui found")
+            return
+        end
+
+        -- Wait for and click the Fight button first
+        local fightBtn = nil
+        local waited = 0
+        while not fightBtn and waited < 5 do
+            for _, obj in ipairs(battleGui:GetDescendants()) do
+                if (obj:IsA("TextButton") or obj:IsA("ImageButton")) and obj.Visible then
+                    if obj.Name:lower():find("fight") then
+                        fightBtn = obj
+                        break
+                    end
+                end
+            end
+            task.wait(0.1)
+            waited += 0.1
+        end
+
+        if not fightBtn then
+            warn("[AutoMove] Fight button not found")
+            return
+        end
+
+        fightBtn:Activate()
+        task.wait(0.4)
+
+        -- Build the priority list from the dropdown selection
+        -- Options.MovePriority.Value is a string like "Move 1"
+        -- We'll try slots in the user's chosen priority order
+        local slotMap = {["Move 1"] = 1, ["Move 2"] = 2, ["Move 3"] = 3, ["Move 4"] = 4}
+
+        -- Get ordered priority from the dropdown value
+        -- The dropdown stores the selected value as a string
+        local selectedValue = Options.MovePriority.Value
+        local orderedSlots = {}
+
+        -- Primary slot from dropdown
+        local primarySlot = slotMap[selectedValue] or 1
+        table.insert(orderedSlots, primarySlot)
+
+        -- Append remaining slots as fallback in order
+        for i = 1, 4 do
+            if i ~= primarySlot then
+                table.insert(orderedSlots, i)
+            end
+        end
+
+        -- Try each slot in priority order, skipping ones with 0 PP
+        for _, slot in ipairs(orderedSlots) do
+            -- Read PP for this slot
+            local pp = readMovePP(battleGui, slot)
+
+            -- Update our tracker
+            if pp ~= nil then
+                ppTracker[slot] = pp
+            end
+
+            -- Skip if we know this slot is out of PP
+            if ppTracker[slot] ~= nil and ppTracker[slot] <= 0 then
+                print("[AutoMove] Slot", slot, "is out of PP, skipping")
+            else
+                -- Try to click it
+                local success = clickMoveSlot(battleGui, slot)
+                if success then
+                    print("[AutoMove] Used move slot", slot)
+                    -- Decrement our local PP tracker
+                    if ppTracker[slot] ~= nil then
+                        ppTracker[slot] = ppTracker[slot] - 1
+                    end
+                    return
+                end
+            end
+        end
+
+        warn("[AutoMove] All move slots exhausted or unavailable!")
+        Notify("Auto Move", "All moves out of PP!", 4)
+    end)
+end
+
 local function doEncounter()
     local char = LocalPlayer.Character
     if not char then return false end
@@ -325,7 +471,6 @@ local function doEncounter()
         if battleWatcher then battleWatcher:Disconnect() battleWatcher = nil end
         hrp.Anchored = false
         hrp.CFrame = origin
-        -- Reset camera immediately so battle UI works normally
         resetCamera()
         showChar()
     end
@@ -338,7 +483,11 @@ local function doEncounter()
         if child.Name == "RouteNight" or child.Name == "RouteDay" then
             battleStarted = true
             restorePosition()
-            -- Watch for battle end
+            -- Fire auto move after battle UI is ready
+            task.spawn(function()
+                task.wait(1.2)
+                autoUseMove()
+            end)
             battleEndWatcher = workspace.ChildRemoved:Connect(function(removed)
                 if removed.Name == "RouteNight" or removed.Name == "RouteDay" then
                     if battleEndWatcher then battleEndWatcher:Disconnect() battleEndWatcher = nil end
@@ -382,14 +531,12 @@ local function doEncounter()
         end
     end)
 
-    -- Wait up to 6s for encounter to trigger
     local elapsed = 0
     while not restored and elapsed < 6 and autoBattleEnabled do
         task.wait(0.1)
         elapsed += 0.1
     end
 
-    -- No battle triggered, clean up
     if not restored then
         if conn then conn:Disconnect() conn = nil end
         if battleWatcher then battleWatcher:Disconnect() battleWatcher = nil end
@@ -439,14 +586,12 @@ AutoBattleGroup:AddToggle('AutoBattle', {
 
                 if not autoBattleEnabled then break end
 
-                -- Wait for battle to appear, up to 3s
                 local waitForBattle = 0
                 repeat
                     task.wait(0.2)
                     waitForBattle += 0.2
                 until isInBattle() or waitForBattle >= 3 or not autoBattleEnabled
 
-                -- Wait for battle to end
                 repeat task.wait(0.3) until not isInBattle() or not autoBattleEnabled
                 task.wait(0.8)
             end
@@ -462,6 +607,30 @@ AutoBattleGroup:AddToggle('AutoBattle', {
     end
 })
 
+AutoBattleGroup:AddToggle('AutoMove', {
+    Text = 'Auto Use Move',
+    Default = false,
+    Callback = function(state)
+        if state then
+            resetPPTracker()
+            Notify("Auto Move", "Enabled!", 3)
+        else
+            Notify("Auto Move", "Disabled!", 3)
+        end
+    end
+})
+
+AutoBattleGroup:AddDropdown('MovePriority', {
+    Text = 'Move Priority',
+    Values = {'Move 1', 'Move 2', 'Move 3', 'Move 4'},
+    Default = 1, -- defaults to "Move 1"
+})
+
+AutoBattleGroup:AddButton('Reset PP Tracker', function()
+    resetPPTracker()
+    Notify("Auto Move", "PP tracker reset!", 3)
+end)
+
 -- ============================================================
 -- MISC TAB
 -- ============================================================
@@ -472,7 +641,7 @@ MiscLeft:AddSlider('WalkSpeed', {
     Text = 'Walk Speed',
     Default = 16,
     Min = 16,
-    Max =30,
+    Max = 30,
     Rounding = 0,
     Callback = function(value)
         local char = LocalPlayer.Character
