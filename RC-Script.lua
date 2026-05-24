@@ -362,19 +362,23 @@ local function doEncounter()
                 track:Stop(0)
             end
         end
-        local offset = step % 6
+        local offset = step % 8
         if offset == 0 then
             hrp.CFrame = jitterOrigin
         elseif offset == 1 then
-            hrp.CFrame = jitterOrigin * CFrame.new(3, 0, 0)
+            hrp.CFrame = jitterOrigin * CFrame.new(4, 0, 0)
         elseif offset == 2 then
-            hrp.CFrame = jitterOrigin * CFrame.new(0, 0, 3)
+            hrp.CFrame = jitterOrigin * CFrame.new(0, 0, 4)
         elseif offset == 3 then
-            hrp.CFrame = jitterOrigin * CFrame.new(-3, 0, 0)
+            hrp.CFrame = jitterOrigin * CFrame.new(-4, 0, 0)
         elseif offset == 4 then
-            hrp.CFrame = jitterOrigin * CFrame.new(0, 0, -3)
+            hrp.CFrame = jitterOrigin * CFrame.new(0, 0, -4)
+        elseif offset == 5 then
+            hrp.CFrame = jitterOrigin * CFrame.new(4, 0, 4)
+        elseif offset == 6 then
+            hrp.CFrame = jitterOrigin * CFrame.new(-4, 0, 4)
         else
-            hrp.CFrame = jitterOrigin * CFrame.new(3, 0, 3)
+            hrp.CFrame = jitterOrigin * CFrame.new(4, 0, -4)
         end
     end)
 
@@ -468,7 +472,7 @@ MiscLeft:AddSlider('WalkSpeed', {
     Text = 'Walk Speed',
     Default = 16,
     Min = 16,
-    Max = 50,
+    Max =30,
     Rounding = 0,
     Callback = function(value)
         local char = LocalPlayer.Character
