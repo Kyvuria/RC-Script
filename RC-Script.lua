@@ -29,6 +29,57 @@ local function GetChunks()
     return chunks
 end
 
+local function isInBattle()
+    return workspace:FindFirstChild("RouteNight") ~= nil or workspace:FindFirstChild("RouteDay") ~= nil
+end
+
+local function findMGrass()
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+    local grass, closestDist = nil, math.huge
+    for _, chunk in ipairs(GetChunks()) do
+        for _, obj in ipairs(chunk:GetDescendants()) do
+            if obj.Name == "Grass" and obj:IsA("BasePart") and obj.Parent and obj.Parent.Name == "MGrass" then
+                local dist = (obj.Position - hrp.Position).Magnitude
+                if dist < closestDist then
+                    closestDist = dist
+                    grass = obj
+                end
+            end
+        end
+    end
+    return grass
+end
+
+local function resetCamera()
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local cam = workspace.CurrentCamera
+    cam.CameraType = Enum.CameraType.Custom
+    if hum then cam.CameraSubject = hum end
+end
+
+local function showChar()
+    local char = LocalPlayer.Character
+    if not char then return end
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            pcall(function() part.LocalTransparencyModifier = 0 end)
+        end
+    end
+end
+
+local function hideChar()
+    local char = LocalPlayer.Character
+    if not char then return end
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            pcall(function() part.LocalTransparencyModifier = 1 end)
+        end
+    end
+end
+
 -- ============================================================
 -- POKEBALLS
 -- ============================================================
@@ -232,6 +283,160 @@ WorldLeft:AddToggle('DeleteObstacles', {
 })
 
 -- ============================================================
+-- AUTO BATTLE
+-- ============================================================
+local AutoBattleGroup = Tabs.Main:AddRightGroupbox('Auto Battle')
+local autoBattleEnabled = false
+
+local function doEncounter()
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local animator = hum and hum:FindFirstChildOfClass("Animator")
+    local camera = workspace.CurrentCamera
+    if not hrp then return false end
+
+    local grass = findMGrass()
+    if not grass then
+        Notify("Auto Battle", "No MGrass found!", 3)
+        return false
+    end
+
+    local origin = hrp.CFrame
+    local battleStarted = false
+    local restored = false
+    local conn
+    local battleWatcher
+
+    local function restoreAll()
+        if restored then return end
+        restored = true
+        if conn then conn:Disconnect() conn = nil end
+        if battleWatcher then battleWatcher:Disconnect() battleWatcher = nil end
+        hrp.Anchored = false
+        hrp.CFrame = origin
+        resetCamera()
+    end
+
+    hideChar()
+
+    local jitterOrigin = CFrame.new(grass.Position.X, grass.Position.Y + 3, grass.Position.Z)
+
+    battleWatcher = workspace.ChildAdded:Connect(function(child)
+        if child.Name == "RouteNight" or child.Name == "RouteDay" then
+            battleStarted = true
+            restoreAll()
+        end
+    end)
+
+    camera.CameraType = Enum.CameraType.Scriptable
+
+    local step = 0
+    conn = RunService.Heartbeat:Connect(function()
+        if restored then return end
+        step += 1
+        hrp.Anchored = true
+        camera.CameraType = Enum.CameraType.Scriptable
+        if animator then
+            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                track:Stop(0)
+            end
+        end
+        local offset = step % 6
+        if offset == 0 then
+            hrp.CFrame = jitterOrigin
+        elseif offset == 1 then
+            hrp.CFrame = jitterOrigin * CFrame.new(3, 0, 0)
+        elseif offset == 2 then
+            hrp.CFrame = jitterOrigin * CFrame.new(0, 0, 3)
+        elseif offset == 3 then
+            hrp.CFrame = jitterOrigin * CFrame.new(-3, 0, 0)
+        elseif offset == 4 then
+            hrp.CFrame = jitterOrigin * CFrame.new(0, 0, -3)
+        else
+            hrp.CFrame = jitterOrigin * CFrame.new(3, 0, 3)
+        end
+    end)
+
+    local elapsed = 0
+    while not restored and elapsed < 6 and autoBattleEnabled do
+        task.wait(0.1)
+        elapsed += 0.1
+    end
+    restoreAll()
+
+    return battleStarted
+end
+
+AutoBattleGroup:AddToggle('AutoBattle', {
+    Text = 'Auto Battle',
+    Default = false,
+    Callback = function(state)
+        autoBattleEnabled = state
+        if not state then
+            -- Don't touch anything if mid-battle, let it finish naturally
+            if not isInBattle() then
+                resetCamera()
+                showChar()
+                local char = LocalPlayer.Character
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if hrp then hrp.Anchored = false end
+            end
+            Notify("Auto Battle", "Stopped!", 3)
+            return
+        end
+
+        Notify("Auto Battle", "Started!", 3)
+        task.spawn(function()
+            while autoBattleEnabled do
+                if isInBattle() then
+                    repeat task.wait(0.3) until not isInBattle() or not autoBattleEnabled
+                    task.wait(0.5)
+                end
+
+                if not autoBattleEnabled then break end
+
+                resetCamera()
+                local char = LocalPlayer.Character
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if hrp then hrp.Anchored = false end
+                showChar()
+                task.wait(0.2)
+
+                doEncounter()
+
+                if not autoBattleEnabled then break end
+
+                -- Wait for battle to appear, up to 3s
+                local waitForBattle = 0
+                repeat
+                    task.wait(0.2)
+                    waitForBattle += 0.2
+                until isInBattle() or waitForBattle >= 3 or not autoBattleEnabled
+
+                -- Wait for battle to end
+                repeat task.wait(0.3) until not isInBattle() or not autoBattleEnabled
+
+                task.wait(0.3)
+                showChar()
+                resetCamera()
+                task.wait(0.3)
+            end
+
+            -- Final cleanup only if not mid-battle
+            if not isInBattle() then
+                showChar()
+                resetCamera()
+                local char = LocalPlayer.Character
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if hrp then hrp.Anchored = false end
+            end
+        end)
+    end
+})
+
+-- ============================================================
 -- MISC TAB
 -- ============================================================
 local MiscLeft = Tabs.Misc:AddLeftGroupbox('Player')
@@ -312,117 +517,6 @@ MiscLeft:AddToggle('Noclip', {
     end
 })
 
--- ============================================================
--- AUTO ENCOUNTER
--- Teleports you into grass, waits 2 full seconds so the server
--- has time to register your position and tick the step counter,
--- then snaps you back. Repeats until a battle starts.
--- Battle detection checks ScreenGui only (skips Folders etc).
--- ============================================================
-local autoEncounterRunning = false
-
-local function getClosestGrass()
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    local closest, closestDist = nil, math.huge
-    for _, chunk in ipairs(GetChunks()) do
-        for _, obj in ipairs(chunk:GetDescendants()) do
-            if (obj.Name == "Grass" or obj.Name == "MGrass") and obj:IsA("BasePart") then
-                local dist = hrp and (obj.Position - hrp.Position).Magnitude or 0
-                if dist < closestDist then
-                    closestDist = dist
-                    closest = obj
-                end
-            end
-        end
-    end
-    return closest
-end
-
-local function isInBattle()
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    if not pg then return false end
-    for _, gui in ipairs(pg:GetChildren()) do
-        if gui:IsA("ScreenGui") then
-            local n = gui.Name:lower()
-            if (n:find("battle") or n:find("fight") or n:find("pokemon")) and gui.Enabled then
-                return true
-            end
-        end
-    end
-    return false
-end
-
-MiscLeft:AddToggle('AutoEncounter', {
-    Text = 'Auto Encounter',
-    Default = false,
-    Callback = function(state)
-        if state then
-            local grass = getClosestGrass()
-            if not grass then
-                Notify("Auto Encounter", "No grass found on this route!", 3)
-                return
-            end
-
-            -- Clone a grass part and sink it deep underground below the player
-            -- completely invisible to everyone, only the server sees it
-            local ghostGrass = grass:Clone()
-            ghostGrass.Name = "Grass"
-            ghostGrass.Anchored = true
-            ghostGrass.CanCollide = false
-            ghostGrass.Transparency = 1
-            ghostGrass.Size = Vector3.new(20, 1, 20)
-            ghostGrass.Parent = workspace
-
-            autoEncounterRunning = true
-            Notify("Auto Encounter", "Running!", 3)
-
-            task.spawn(function()
-                while autoEncounterRunning do
-                    if isInBattle() then
-                        task.wait(0.5)
-                    else
-                        local char = LocalPlayer.Character
-                        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                        if hrp then
-                            -- Keep ghost grass directly under player, 2000 studs underground
-                            -- so it is completely invisible but server still detects overlap
-                            local underPos = Vector3.new(hrp.Position.X, hrp.Position.Y - 2000, hrp.Position.Z)
-                            ghostGrass.CFrame = CFrame.new(underPos)
-
-                            local realCFrame = hrp.CFrame
-
-                            -- Flicker player down into ghost grass for 3 frames
-                            hrp.CFrame = CFrame.new(underPos.X, underPos.Y + 1, underPos.Z)
-                            task.wait()
-                            task.wait()
-                            task.wait()
-
-                            -- Snap back instantly
-                            if hrp and hrp.Parent then
-                                hrp.CFrame = realCFrame
-                            end
-
-                            task.wait(0.2)
-                        else
-                            task.wait(0.5)
-                        end
-                    end
-                end
-
-                -- Clean up ghost grass when stopped
-                if ghostGrass and ghostGrass.Parent then
-                    ghostGrass:Destroy()
-                end
-            end)
-        else
-            autoEncounterRunning = false
-            Notify("Auto Encounter", "Stopped!", 3)
-        end
-    end
-})
-
--- CLICK TP
 local clickTpConnection = nil
 MiscLeft:AddToggle('ClickTP', {
     Text = 'Click TP (Ctrl + Click)',
